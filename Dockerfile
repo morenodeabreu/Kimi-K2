@@ -1,6 +1,6 @@
 # Usamos a imagem base do RunPod que já vem com PyTorch e CUDA.
 # É a mesma da sua captura de tela, o que é ótimo.
-FROM runpod/pytorch:2.2.2-py3.10-cuda12.1.1-devel
+FROM runpod/pytorch:2.3.0-py3.10-cuda12.1.1-devel-ubuntu22.04
 
 # Define o diretório de trabalho dentro do container
 WORKDIR /app
