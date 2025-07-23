@@ -1,61 +1,60 @@
 import runpod
 from vllm import LLM, SamplingParams
+import traceback  # Importamos uma ferramenta para capturar erros detalhados
 
-# Variável global para armazenar o modelo carregado
+# Variáveis globais
 llm = None
+load_error = None  # Nova variável para guardar a mensagem de erro
 
 def load_model():
     """
-    Esta função carrega o modelo Kimi-K2 32B usando vLLM quando o pod inicia.
+    Tenta carregar o modelo e captura qualquer erro que acontecer.
     """
-    global llm
+    global llm, load_error
+    try:
+        model_id = "MoonshotAI/Kimi-K2-32B"
+        print(f"Iniciando o carregamento do modelo: {model_id}")
 
-    # ATENÇÃO: Substitua pelo nome EXATO do modelo 32B no Hugging Face, se for diferente.
-    # Estou usando um nome hipotético baseado na sua informação.
-    model_id = "MoonshotAI/Kimi-K2-32B"
-
-    print(f"Iniciando o carregamento do modelo: {model_id}")
-
-    # Configura e carrega o modelo. Se falhar aqui, será por falta de memória ou nome incorreto.
-    llm = LLM(
-        model=model_id,
-        trust_remote_code=True,      # Necessário conforme a documentação do Kimi
-        tensor_parallel_size=1,      # Usando apenas 1 GPU
-        gpu_memory_utilization=0.95  # Tenta usar 95% da VRAM disponível
-    )
-    
-    print("Modelo carregado com sucesso!")
-    return llm
+        llm = LLM(
+            model=model_id,
+            trust_remote_code=True,
+            tensor_parallel_size=1,
+            gpu_memory_utilization=0.95
+        )
+        
+        print("Modelo carregado com sucesso!")
+        return llm
+    except Exception as e:
+        # Se qualquer erro acontecer, nós o capturamos aqui!
+        print(f"ERRO AO CARREGAR O MODELO: {e}")
+        # Formatamos o erro completo para ter todos os detalhes
+        load_error = traceback.format_exc()
+        return None
 
 def handler(job):
     """
-    Esta função processa cada requisição recebida pelo endpoint.
+    Processa a requisição. Se o modelo não carregou, retorna o erro detalhado.
     """
-    global llm
-    if llm is None:
-        return {"error": "O modelo não foi carregado. Verifique os logs do build."}
-
-    # Extrai os dados da requisição
-    job_input = job['input']
-    prompt = job_input.get('prompt', 'Qual a diferença entre um modelo de 32 bilhões e 70 bilhões de parâmetros?')
+    global llm, load_error
     
-    # Define os parâmetros para a geração de texto
+    if llm is None:
+        # Em vez da mensagem genérica, agora retornamos o erro real!
+        return {"error": f"O modelo falhou ao carregar. Erro detalhado: {load_error}"}
+
+    # Se não houve erro, o código continua normalmente
+    job_input = job['input']
+    prompt = job_input.get('prompt', 'Olá, Kimi!')
+    
     sampling_params = SamplingParams(
         temperature=job_input.get('temperature', 0.7),
-        top_p=job_input.get('top_p', 0.95),
         max_tokens=job_input.get('max_tokens', 1024)
     )
 
-    print("Gerando resposta para o prompt...")
-    # Usa o vLLM para gerar a resposta
     outputs = llm.generate(prompt, sampling_params)
-    
-    # Extrai e retorna o texto da primeira resposta gerada
     response_text = outputs[0].outputs[0].text
-    print("Resposta gerada com sucesso.")
     
     return {"output": response_text}
 
 # Inicia o servidor do RunPod
 if __name__ == "__main__":
-    runpod.serverless.start({"handler": handler})
+    runpod.serverless.start({"handler": handler, "load_model": load_model})
