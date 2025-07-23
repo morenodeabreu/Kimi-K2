@@ -1,6 +1,3 @@
-dockerfile
-# PASSO 1: Começamos com a imagem oficial da NVIDIA com CUDA 12.1
-# Esta imagem é garantida de existir.
 FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
 # Define o diretório de trabalho
@@ -25,4 +22,3 @@ RUN pip3 install --no-cache-dir torch runpod
 
 # Comando para iniciar nosso handler
 CMD ["python3", "handler.py"]
-
