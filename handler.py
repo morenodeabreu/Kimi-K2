@@ -1,56 +1,61 @@
 import runpod
-# Importe aqui a biblioteca principal do Kimi que está no repositório
-# Exemplo: from kimi_code import KimiModel
-# (Você precisa olhar os arquivos do GitHub para saber o nome certo)
+from vllm import LLM, SamplingParams
 
-# Variável global para armazenar o modelo carregado na memória
-model = None
+# Variável global para armazenar o modelo carregado
+llm = None
 
 def load_model():
     """
-    Esta função é chamada uma vez quando o pod inicia.
-    Ela carrega o modelo na memória da GPU.
+    Esta função carrega o modelo Kimi-K2 32B usando vLLM quando o pod inicia.
     """
-    global model
+    global llm
+
+    # ATENÇÃO: Substitua pelo nome EXATO do modelo 32B no Hugging Face, se for diferente.
+    # Estou usando um nome hipotético baseado na sua informação.
+    model_id = "MoonshotAI/Kimi-K2-32B"
+
+    print(f"Iniciando o carregamento do modelo: {model_id}")
+
+    # Configura e carrega o modelo. Se falhar aqui, será por falta de memória ou nome incorreto.
+    llm = LLM(
+        model=model_id,
+        trust_remote_code=True,      # Necessário conforme a documentação do Kimi
+        tensor_parallel_size=1,      # Usando apenas 1 GPU
+        gpu_memory_utilization=0.95  # Tenta usar 95% da VRAM disponível
+    )
     
-    # AQUI: Coloque o código real do repositório Kimi para carregar o modelo.
-    # Pode ser algo como:
-    # model = KimiModel(model_path="path/to/weights")
-    #
-    # Se os pesos precisarem ser baixados, o código para isso vai aqui.
-    
-    print("Modelo Kimi carregado com sucesso!")
-    # Substitua o print acima pela inicialização real do modelo
-    # Exemplo: model = KimiModel()
-    return object() # Retornamos um objeto de exemplo para o handler
+    print("Modelo carregado com sucesso!")
+    return llm
 
 def handler(job):
     """
-    Esta função é chamada para cada requisição enviada ao seu endpoint.
-    'job' contém os dados da requisição.
+    Esta função processa cada requisição recebida pelo endpoint.
     """
-    global model
+    global llm
+    if llm is None:
+        return {"error": "O modelo não foi carregado. Verifique os logs do build."}
 
-    if model is None:
-        return {"error": "Modelo não foi carregado."}
-
-    # Extrai o input da requisição. Geralmente vem em 'input'.
+    # Extrai os dados da requisição
     job_input = job['input']
+    prompt = job_input.get('prompt', 'Qual a diferença entre um modelo de 32 bilhões e 70 bilhões de parâmetros?')
     
-    # Exemplo de como pegar um prompt
-    prompt = job_input.get('prompt', 'Default prompt')
+    # Define os parâmetros para a geração de texto
+    sampling_params = SamplingParams(
+        temperature=job_input.get('temperature', 0.7),
+        top_p=job_input.get('top_p', 0.95),
+        max_tokens=job_input.get('max_tokens', 1024)
+    )
 
-    # AQUI: Coloque a chamada real para a função de inferência do Kimi
-    # Pode ser algo como:
-    # output = model.generate(text=prompt, max_length=512)
-    #
-    # Por enquanto, vamos retornar uma resposta de exemplo:
-    output = f"Resposta do Kimi para o prompt: '{prompt}'"
+    print("Gerando resposta para o prompt...")
+    # Usa o vLLM para gerar a resposta
+    outputs = llm.generate(prompt, sampling_params)
     
-    return {"output": output}
+    # Extrai e retorna o texto da primeira resposta gerada
+    response_text = outputs[0].outputs[0].text
+    print("Resposta gerada com sucesso.")
+    
+    return {"output": response_text}
 
-# Inicia o servidor do RunPod, passando nossas funções
+# Inicia o servidor do RunPod
 if __name__ == "__main__":
-    # Carrega o modelo antes de iniciar o servidor
-    model = load_model()
     runpod.serverless.start({"handler": handler})
