@@ -3,8 +3,7 @@ FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
 
 WORKDIR /app
 
-# PASSO CRUCIAL: Adiciona o repositório 'deadsnakes' para encontrar o Python 3.11
-# e depois instala tudo o que precisamos.
+# Instala o básico, incluindo o Python 3.11 e suas ferramentas
 RUN apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa -y \
@@ -12,19 +11,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
     git \
     python3.11 \
-    python3.11-pip \
     python3.11-venv \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Faz com que os comandos 'python3' e 'pip3' usem a versão 3.11
-RUN ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
-    ln -sf /usr/bin/pip3.11 /usr/bin/pip3
-
-# Copia os arquivos do projeto
+# Copia os arquivos do projeto para o container
 COPY . .
 
-# Instala as dependências Python do Kimi
-RUN pip3 install --no-cache-dir -r requirements.txt
+# A MUDANÇA FINAL E CRUCIAL:
+# Usamos 'python3.11 -m pip' para forçar o uso da versão correta do pip
+RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
 
-# Define o comando padrão para iniciar o nosso servidor
-CMD ["python3", "handler.py"]
+# Comando para iniciar nosso servidor, usando explicitamente o python3.11
+CMD ["python3.11", "handler.py"]
