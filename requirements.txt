@@ -1,0 +1,3 @@
+vllm>=0.10.0rc1
+# Adicionamos o runpod para o nosso handler
+runpod
