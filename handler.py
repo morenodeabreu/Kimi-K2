@@ -1,63 +1,65 @@
 import runpod
-import os
-import traceback
-from typing import Dict, Any
+import torch
 import logging
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import traceback
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global model instance
-llm = None
+model = None
+tokenizer = None
 load_error = None
 
 def load_model():
     """
-    Carrega modelo otimizado para 48GB VRAM
+    Carrega modelo usando transformers (mais simples que vLLM)
+    Testando com modelo menor primeiro
     """
-    global llm, load_error
+    global model, tokenizer, load_error
     try:
-        # Importações lazy para economizar memória
-        from vllm import LLM, SamplingParams
-        
-        # Modelo que cabe em 48GB: Qwen2.5-32B-Instruct (quantizado)
-        model_id = "Qwen/Qwen2.5-32B-Instruct-GPTQ-Int4"
+        # Usar modelo menor que cabe em 48GB
+        model_id = "microsoft/DialoGPT-large"  # ~800MB - para teste inicial
         
         logger.info(f"🚀 Carregando modelo: {model_id}")
         
-        llm = LLM(
-            model=model_id,
-            trust_remote_code=True,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.85,  # Mais conservador
-            max_model_len=4096,  # Reduzir para economizar VRAM
-            quantization="gptq",  # Especificar quantização
-            dtype="half",  # FP16 para economizar memória
-            enforce_eager=True,  # Evitar compilation overhead
+        # Carregar tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        
+        # Carregar modelo
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+            trust_remote_code=True
         )
         
         logger.info("✅ Modelo carregado com sucesso!")
-        return llm
+        return True
         
     except Exception as e:
         error_msg = f"❌ ERRO ao carregar modelo: {str(e)}"
         logger.error(error_msg)
         load_error = traceback.format_exc()
         logger.error(f"Stack trace: {load_error}")
-        return None
+        return False
 
 def initialize_model():
     """
     Inicialização sob demanda do modelo
     """
-    global llm
-    if llm is None:
+    global model, tokenizer
+    if model is None or tokenizer is None:
         logger.info("🔄 Inicializando modelo...")
-        llm = load_model()
-    return llm is not None
+        return load_model()
+    return True
 
-def handler(job: Dict[str, Any]) -> Dict[str, Any]:
+def handler(job):
     """
     Handler principal do RunPod serverless
     """
@@ -71,36 +73,41 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
         
         job_input = job.get('input', {})
         
-        # Extrair parâmetros com defaults seguros
+        # Extrair parâmetros
         prompt = job_input.get('prompt', 'Olá! Como posso ajudar você hoje?')
+        max_tokens = job_input.get('max_tokens', 100)
         temperature = job_input.get('temperature', 0.7)
-        max_tokens = job_input.get('max_tokens', 1024)
-        top_p = job_input.get('top_p', 0.9)
         
-        logger.info(f"📝 Processando prompt: {prompt[:100]}...")
+        logger.info(f"📝 Processando prompt: {prompt[:50]}...")
         
-        # Importar aqui para economizar memória inicial
-        from vllm import SamplingParams
-        
-        # Parâmetros de sampling otimizados
-        sampling_params = SamplingParams(
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            stop=["</s>", "<|endoftext|>", "<|im_end|>"],  # Stop tokens comuns
-        )
+        # Tokenizar input
+        inputs = tokenizer.encode(prompt, return_tensors="pt", truncate=True, max_length=512)
+        inputs = inputs.to(model.device)
         
         # Gerar resposta
-        outputs = llm.generate([prompt], sampling_params)
-        response_text = outputs[0].outputs[0].text.strip()
+        with torch.no_grad():
+            outputs = model.generate(
+                inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=1.1
+            )
         
-        logger.info(f"✅ Resposta gerada: {len(response_text)} caracteres")
+        # Decodificar resposta
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Remover o prompt da resposta
+        response = response[len(prompt):].strip()
+        
+        logger.info(f"✅ Resposta gerada: {len(response)} caracteres")
         
         return {
-            "output": response_text,
+            "output": response,
             "status": "success",
             "model_info": {
-                "model_id": "Qwen2.5-32B-Instruct-GPTQ",
+                "model_id": "microsoft/DialoGPT-large",
                 "max_tokens": max_tokens,
                 "temperature": temperature
             }
@@ -115,7 +122,6 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             "status": "handler_error"
         }
 
-# Função para warming up (opcional)
 def warmup():
     """
     Aquece o modelo com uma requisição simples
@@ -126,23 +132,21 @@ def warmup():
             test_job = {
                 "input": {
                     "prompt": "Hello",
-                    "max_tokens": 10
+                    "max_tokens": 5
                 }
             }
-            handler(test_job)
-            logger.info("✅ Warmup concluído!")
+            result = handler(test_job)
+            logger.info(f"✅ Warmup concluído! Resultado: {result.get('status', 'unknown')}")
     except Exception as e:
         logger.warning(f"⚠️ Warmup falhou: {e}")
 
 if __name__ == "__main__":
     logger.info("🚀 Iniciando RunPod Serverless...")
     
-    # Fazer warmup opcional
+    # Fazer warmup
     warmup()
     
     # Iniciar servidor
     runpod.serverless.start({
-        "handler": handler,
-        "concurrency_modifier": lambda x: 1,  # Limitar concorrência
-        "return_aggregate_stream": True
+        "handler": handler
     })
