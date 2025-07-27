@@ -1,27 +1,44 @@
-FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+# Use base image específica para vLLM
+FROM vllm/vllm-openai:latest
 
-# 2. Evitamos perguntas interativas durante o build.
+# Evitar perguntas interativas
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Configurações de environment para RunPod
+ENV RUNPOD_AI_API_KEY=""
+ENV HF_HOME="/tmp/huggingface"
+ENV TRANSFORMERS_CACHE="/tmp/transformers"
 
 WORKDIR /app
 
-# 3. Adicionamos o repositório 'deadsnakes' e instalamos o Python 3.11 corretamente.
+# Instalar dependências do sistema
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa -y \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
     git \
-    python3.11 \
-    python3.11-venv \
-    python3-pip \
+    wget \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 4. Copia os arquivos do projeto para o container.
-COPY . .
+# Copiar arquivos de requisitos primeiro (para melhor cache)
+COPY requirements.txt .
 
-# 5. Usa a versão correta do pip (do Python 3.11) para instalar as dependências.
-RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
+# Instalar dependências Python
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# 6. Comando para iniciar nosso servidor com a versão correta do Python.
-CMD ["python3.11", "handler.py"]
+# Copiar código da aplicação
+COPY handler.py .
+COPY *.py .
+
+# Criar diretórios para cache
+RUN mkdir -p /tmp/huggingface /tmp/transformers
+
+# Pre-baixar tokenizer (opcional, para acelerar primeira execução)
+RUN python -c "from transformers import AutoTokenizer; AutoTokenizer.from_pretrained('Qwen/Qwen2.5-32B-Instruct-GPTQ-Int4', trust_remote_code=True)" || true
+
+# Configurar health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD python -c "import runpod; print('OK')" || exit 1
+
+# Comando para iniciar o servidor
+CMD ["python", "handler.py"]
