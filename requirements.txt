@@ -1,22 +1,15 @@
-# Core dependencies
+# Core dependencies - versão que FUNCIONA
 runpod>=1.6.0
-vllm>=0.6.0
 torch>=2.1.0
 transformers>=4.36.0
 accelerate>=0.25.0
 
-# GPTQ support para quantização
-auto-gptq>=0.5.0
-optimum>=1.14.0
-
-# Utilities
+# Utilities essenciais
 huggingface-hub>=0.19.0
 sentencepiece>=0.1.99
-protobuf>=3.20.0
 
 # Performance & monitoring
 psutil>=5.9.0
-gpustat>=1.1.1
 
 # Optional: Faster tokenizers
 tokenizers>=0.15.0
